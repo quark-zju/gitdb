@@ -30,9 +30,9 @@ func checkGit() bool {
 		} else {
 			verStr := regexp.MustCompile(`[0-9]+(?:\.[0-9]+)?`).FindString(out.String())
 			gitVer, _ = strconv.ParseFloat(verStr, 64)
-			if gitVer < 1.6 {
-				fmt.Printf("git %v >= 1.6 not found. skip tests\n", gitVer)
-			}
+		}
+		if gitVer < 1.6 {
+			fmt.Println("git >= 1.6 not found, some tests are skipped.")
 		}
 	}
 	return gitVer >= 1.6

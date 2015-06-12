@@ -6,6 +6,9 @@ import (
 )
 
 const table = "gitobjects"
+const batchRows = 500
+
+type RowScanFunc func(...interface{}) error
 
 func CreateTable(db *sql.DB) (sql.Result, error) {
 	return db.Exec("CREATE TABLE IF NOT EXISTS " + table + " (" +
@@ -42,29 +45,25 @@ func walk(tx *sql.Tx, oids []string, skipOids []string) ([]string, error) {
 	queryOids := oids // oids for current query
 	result := oids    // result. not using keys of m because it's unordered
 	for len(queryOids) > 0 {
-		rows, err := queryByOids(tx, "referred", queryOids)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-
-		queryOids = make([]string, 0)
-		for rows.Next() {
+		nextQueryOids := make([]string, 0)
+		err := queryByOids(tx, "referred", queryOids, func(scan RowScanFunc) error {
 			var referred string
-			if err = rows.Scan(&referred); err != nil {
-				return nil, err
+			if err := scan(&referred); err != nil {
+				return err
 			}
 			for _, v := range strings.Split(referred, ",") {
 				if len(v) > 0 && walked[v] == false {
-					queryOids = append(queryOids, v)
+					nextQueryOids = append(nextQueryOids, v)
 					result = append(result, v)
 					walked[v] = true
 				}
 			}
-		}
-		if err := rows.Err(); err != nil {
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
+		queryOids = nextQueryOids
 	}
 	return result, nil
 }
@@ -103,9 +102,10 @@ func GC(db *sql.DB, oids []string) ([]string, error) {
 		return nil, err
 	}
 
-	if len(deletable) > 0 {
-		args := toInterfaces(deletable)
-		_, err := tx.Exec("DELETE FROM "+table+" WHERE oid IN (?"+strings.Repeat(",?", len(deletable)-1)+")", args...)
+	for i := 0; i < len(deletable); i += batchRows {
+		j := min(i+batchRows, len(deletable))
+		args := toInterfaces(deletable[i:j])
+		_, err := tx.Exec("DELETE FROM "+table+" WHERE oid IN (?"+strings.Repeat(",?", len(args)-1)+")", args...)
 		if err != nil {
 			return nil, err
 		}
@@ -148,21 +148,17 @@ func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 	}
 
 	// read content
-	rows, err := queryByOids(tx, "oid, zcontent", newOids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	zmap := make(map[string][]byte, len(newOids))
-	for rows.Next() {
+	err = queryByOids(tx, "oid, zcontent", newOids, func(scan RowScanFunc) error {
 		var o string
 		var z []byte
-		if err = rows.Scan(&o, &z); err != nil {
-			return nil, err
+		if err := scan(&o, &z); err != nil {
+			return err
 		}
 		zmap[o] = z
-	}
-	if err := rows.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -215,34 +211,45 @@ func toInterfaces(a []string) []interface{} {
 }
 
 // queryByOids fetch db rows by oids.
-func queryByOids(tx *sql.Tx, columns string, oids []string) (*sql.Rows, error) {
+func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(RowScanFunc) error) error {
 	if (len(oids)) == 0 {
-		return tx.Query("SELECT " + columns + " FROM " + table + " WHERE 0=1")
+		return nil
 	}
-	args := toInterfaces(oids)
-	return tx.Query("SELECT "+columns+" FROM "+table+" WHERE oid IN (?"+strings.Repeat(",?", len(args)-1)+")", args...)
+
+	for i := 0; i < len(oids); i += batchRows {
+		j := min(i+batchRows, len(oids))
+		args := toInterfaces(oids[i:j])
+		rows, err := tx.Query("SELECT "+columns+" FROM "+table+" WHERE oid IN (?"+strings.Repeat(",?", len(args)-1)+")", args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for rows.Next() {
+			if err := rowHandler(rows.Scan); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // unseenOids removes oids which are already stored in database.
-func unseenOids(tx *sql.Tx, oids []string) (unseen []string, err error) {
-	rows, err := queryByOids(tx, "oid", oids)
+func unseenOids(tx *sql.Tx, oids []string) ([]string, error) {
+	exists := make([]string, 0)
+	err := queryByOids(tx, "oid", oids, func(scan RowScanFunc) error {
+		var oid string
+		if err := scan(&oid); err != nil {
+			return err
+		}
+		exists = append(exists, oid)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	exists := make([]string, 0)
-	for rows.Next() {
-		var oid string
-		if err = rows.Scan(&oid); err != nil {
-			return nil, err
-		}
-		exists = append(exists, oid)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
 	return minus(oids, exists), nil
 }
 
@@ -291,4 +298,12 @@ func Import(db *sql.DB, path string, ref string) (refOid string, oids []string, 
 	}
 
 	return refOid, oids, nil
+}
+
+func min(a int, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
 }

@@ -28,7 +28,7 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 		// - type: header in inflated zcontent.
 		// - referred: parsing inflated zcontent.
 		// Other fields exist for performance reason.
-		"zcontent BLOB NOT NULL," +
+		"zcontent MEDIUMBLOB NOT NULL," +
 		"referred TEXT)")
 }
 

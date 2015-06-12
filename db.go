@@ -2,6 +2,7 @@ package gitdb
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -118,6 +119,12 @@ func GC(db *sql.DB, oids []string) ([]string, error) {
 	return deletable, nil
 }
 
+type errMissingObject string
+
+func (e errMissingObject) Error() string {
+	return fmt.Sprintf("git object %s required but not found", string(e))
+}
+
 // TODO
 func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 	// 1: quick test: is repo up-to-date ?
@@ -162,11 +169,12 @@ func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 		return nil, err
 	}
 
+	// write in reversed order, make sure required objects are written first
 	for i := len(newOids) - 1; i >= 0; i-- {
 		o := newOids[i]
 		z, ok := zmap[o]
 		if !ok {
-			return nil, sql.ErrNoRows
+			return nil, errMissingObject(o)
 		}
 		if err := repo.writeRawObject(o, z); err != nil {
 			return nil, err

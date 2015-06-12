@@ -116,6 +116,7 @@ func (r *repo) hasOid(oid string) bool {
 	return err == nil
 }
 
+// TODO
 func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 	dir := filepath.Join(r.dir, "objects", oid[0:2])
 	path := filepath.Join(dir, oid[2:40])
@@ -135,8 +136,7 @@ func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 	return nil
 }
 
-var unsafeRefName = errors.New("unsafe ref name")
-
+// TODO
 func (r *repo) writeRef(ref string, oid string) error {
 	if filepath.IsAbs(ref) || strings.Contains(ref, "..") {
 		return unsafeRefName
@@ -152,6 +152,8 @@ func (r *repo) writeRef(ref string, oid string) error {
 	}
 	return ioutil.WriteFile(path, []byte(oid), 0644)
 }
+
+var unsafeRefName = errors.New("unsafe ref name")
 
 func isDir(path string) bool {
 	fi, err := os.Stat(path)

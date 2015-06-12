@@ -27,11 +27,11 @@ func isOid(oid string) bool {
 // For commit object, returns tree oid, followed by parent oids.
 // For tree object, returns tree and blob oids referred directly.
 // For other (unsupported) objects, returns empty array.
-func (o *gitObject) referredOids() (oids []string) {
+func (o *gitObject) referredOids() []string {
+	var oids []string
 	switch o.Type {
 	case "tree":
 		// mode + " " + name + "\0" + binOid (20 bytes)
-		// fmt.Sprintf("%02x", 255)
 		for i := 0; i < len(o.Body)-20; i++ {
 			if o.Body[i] == 0 {
 				oids = append(oids, hex.EncodeToString(o.Body[i+1:i+21]))
@@ -52,7 +52,7 @@ func (o *gitObject) referredOids() (oids []string) {
 	case "blob":
 		// blob does not refer to other objects
 	}
-	return
+	return oids
 }
 
 // zlibContent returns zlib compressed git object header + body.

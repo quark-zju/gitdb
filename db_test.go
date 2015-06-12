@@ -2,10 +2,12 @@ package gitdb
 
 import (
 	"database/sql"
+	"fmt"
 	_ "github.com/mattn/go-sqlite3"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -22,8 +24,12 @@ func createDb() *sql.DB {
 	return db
 }
 
-func createRepo(name string, n int) string {
+func createRepo(name string, n int, reuse bool) string {
 	dir := filepath.Join(tmpDir, name)
+	if isDir(dir) && reuse && os.Getenv("REUSE") != "" {
+		fmt.Println("Reusing ", dir)
+		return dir
+	}
 	os.RemoveAll(dir)
 	createRandomRepo(dir, n)
 	return dir
@@ -43,7 +49,15 @@ func TestDb(t *testing.T) {
 	db := createDb()
 	defer db.Close()
 
-	dir1 := createRepo("b1", 100)
+	n := 100
+	if os.Getenv("N") != "" {
+		n, _ = strconv.Atoi(os.Getenv("N"))
+		if n < 30 {
+			n = 30
+		}
+		fmt.Println("User set N =", n)
+	}
+	dir1 := createRepo("b1", n, true)
 	ref1, oids1, e := Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
@@ -60,7 +74,7 @@ func TestDb(t *testing.T) {
 	}
 
 	// Test multiple repo
-	dir2 := createRepo("b2", 100)
+	dir2 := createRepo("b2", n, true)
 	ref2, oids, e := Import(db, dir2, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
@@ -129,7 +143,7 @@ func TestDb(t *testing.T) {
 	}
 
 	// Export to an empty repo
-	dir3 := createRepo("c", 0)
+	dir3 := createRepo("c", 0, false)
 	oids, e = Export(db, dir3, ref1, "")
 	if e != nil {
 		t.Fatal("Export error", e)

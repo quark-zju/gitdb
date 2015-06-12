@@ -108,7 +108,7 @@ func createRandomRepo(dir string, steps int) {
 			createRandomFile(dir, "", 128000)
 		}
 	}
-	fmt.Printf("Write repo %s: DONE     \n", dir)
+	fmt.Printf("Write repo %s: DONE        \n", dir)
 }
 
 func verifyGitObject(obj *gitObject) bool {

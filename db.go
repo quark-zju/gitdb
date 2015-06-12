@@ -9,6 +9,12 @@ import (
 const table = "gitobjects"
 const batchRows = 500
 
+// TODO support both DB and Tx
+type dbOrTx interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
 // TODO
 type rowScanFunc func(...interface{}) error
 
@@ -27,7 +33,7 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 }
 
 // TODO
-func Import(db *sql.DB, path string, ref string) (refOid string, oids []string, err error) {
+func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, err error) {
 	// 1: list ids
 	// 2: what ids are we missing
 	// 3: import that ids
@@ -38,11 +44,13 @@ func Import(db *sql.DB, path string, ref string) (refOid string, oids []string, 
 	}
 	refOid = oids[0]
 
-	tx, err := db.Begin()
+	tx, txByUs, err := getTx(dt)
 	if err != nil {
 		return refOid, nil, err
 	}
-	defer tx.Rollback()
+	if txByUs {
+		defer tx.Rollback()
+	}
 
 	oids, err = unseenOids(tx, oids)
 	if err != nil {
@@ -67,15 +75,17 @@ func Import(db *sql.DB, path string, ref string) (refOid string, oids []string, 
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return refOid, nil, err
+	if txByUs {
+		if err = tx.Commit(); err != nil {
+			return refOid, nil, err
+		}
 	}
 
 	return refOid, oids, nil
 }
 
 // TODO
-func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
+func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 	// 1: quick test: is repo up-to-date ?
 	// 2: compare oids, decide which oids to be written
 	// 3: write oids
@@ -89,11 +99,13 @@ func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 		return nil, repo.writeRef(ref, oid)
 	}
 
-	tx, err := db.Begin()
+	tx, txByUs, err := getTx(dt)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	if txByUs {
+		defer tx.Rollback()
+	}
 
 	// Check oids on the fly ?
 	repoOids, err := repo.listOids("--all")
@@ -133,8 +145,10 @@ func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return nil, err
+	if txByUs {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Write ref so that `git rev-list --all` will list these oids
@@ -142,12 +156,14 @@ func Export(db *sql.DB, path string, oid string, ref string) ([]string, error) {
 }
 
 // Gc TODO
-func GC(db *sql.DB, oids []string) ([]string, error) {
-	tx, err := db.Begin()
+func GC(dt dbOrTx, oids []string) ([]string, error) {
+	tx, txByUs, err := getTx(dt)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	if txByUs {
+		defer tx.Rollback()
+	}
 
 	oids, err = traversal(tx, oids, nil)
 	if err != nil {
@@ -184,9 +200,10 @@ func GC(db *sql.DB, oids []string) ([]string, error) {
 		}
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return nil, err
+	if txByUs {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 	return deletable, nil
 }
@@ -270,6 +287,20 @@ func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(rowS
 		}
 	}
 	return nil
+}
+
+// getTx TODO
+func getTx(dt dbOrTx) (tx *sql.Tx, txByUs bool, err error) {
+	db, isDb := dt.(*sql.DB)
+	if isDb {
+		tx, err := db.Begin()
+		return tx, true, err
+	}
+	tx, isTx := dt.(*sql.Tx)
+	if isTx {
+		return tx, false, nil
+	}
+	return nil, false, fmt.Errorf("neither sql.DB nor sql.Tx")
 }
 
 // minus returns []string with elements in a but not b.

@@ -3,6 +3,7 @@ package gitdb
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -28,11 +29,53 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 		// - type: header in inflated zcontent.
 		// - referred: parsing inflated zcontent.
 		// Other fields exist for performance reason.
+		// MEDIUMBLOB is MySQL specific, 16MB.
 		"zcontent MEDIUMBLOB NOT NULL," +
 		"referred TEXT)")
 }
 
 // TODO
+func ReadTree(dt dbOrTx, oid string) (paths []string, oids []string, err error) {
+	tx, txByUs, err := getTx(dt)
+	if err != nil {
+		return nil, nil, err
+	}
+	if txByUs {
+		defer tx.Rollback()
+	}
+
+	prefixes := map[string]string{oid: ""}
+	for oids := []string{oid}; len(oids) > 0; {
+		var nextOids []string
+		objs, err := readObjects(tx, oids)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, o := range objs {
+			prefix := prefixes[o.Oid]
+			switch o.Type {
+			case "commit":
+				// extract tree oid from commit object automatically
+				treeOid := string(o.Body[5:45])
+				nextOids = append(nextOids, treeOid)
+			case "tree":
+				for _, ti := range parseTree(o.Body) {
+					path := filepath.Join(prefix, ti.Name)
+					if ti.IsTree() {
+						prefixes[ti.Oid] = path
+						nextOids = append(nextOids, ti.Oid)
+					} else {
+						paths = append(paths, path)
+						oids = append(oids, ti.Oid)
+					}
+				}
+			}
+		}
+		oids = nextOids
+	}
+	return paths, oids, nil
+}
+
 func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
 	tx, txByUs, err := getTx(dt)
 	if err != nil {

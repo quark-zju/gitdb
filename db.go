@@ -33,6 +33,48 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 }
 
 // TODO
+func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
+	tx, txByUs, err := getTx(dt)
+	if err != nil {
+		return nil, err
+	}
+	if txByUs {
+		defer tx.Rollback()
+	}
+
+	m := make(map[string]*gitObj, len(oids))
+	err = queryByOids(tx, "oid, zcontent", oids, func(scan rowScanFunc) error {
+		var oid string
+		var zcontent []byte
+		if err := scan(&oid, &zcontent); err != nil {
+			return err
+		}
+		o, err := newGitObjFromZcontent(zcontent)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %s", oid, err)
+		}
+		if o.Oid != oid {
+			return fmt.Errorf("sha1 mismatch: %s vs %s", o.Oid, oid)
+		}
+		m[oid] = o
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*gitObj, 0, len(oids))
+	for _, oid := range oids {
+		obj, ok := m[oid]
+		if !ok {
+			return nil, fmt.Errorf("not found: %s", oid)
+		}
+		result = append(result, obj)
+	}
+	return result, nil
+}
+
+// TODO
 func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, err error) {
 	// 1: list ids
 	// 2: what ids are we missing

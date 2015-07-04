@@ -33,6 +33,28 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 }
 
 // TODO
+func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
+	tx, txByUs, err := getTx(dt)
+	if err != nil {
+		return nil, err
+	}
+	if txByUs {
+		defer tx.Rollback()
+	}
+
+	objs, err := readObjects(tx, oids)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([][]byte, 0, len(oids))
+	for _, obj := range objs {
+		result = append(result, obj.Body)
+	}
+	return result, nil
+}
+
+// TODO
 func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
 	tx, txByUs, err := getTx(dt)
 	if err != nil {

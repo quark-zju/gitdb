@@ -69,7 +69,7 @@ func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, e
 	defer stmt.Close()
 
 	for _, obj := range objs {
-		_, err = stmt.Exec(obj.Oid, obj.zlibContent(), obj.Type, strings.Join(obj.referredOids(), ","))
+		_, err = stmt.Exec(obj.Oid, obj.zcontent(), obj.Type, strings.Join(obj.referredOids(), ","))
 		if err != nil {
 			return refOid, nil, err
 		}
@@ -121,12 +121,12 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 	// read content
 	zmap := make(map[string][]byte, len(newOids))
 	err = queryByOids(tx, "oid, zcontent", newOids, func(scan rowScanFunc) error {
-		var o string
-		var z []byte
-		if err := scan(&o, &z); err != nil {
+		var oid string
+		var zcontent []byte
+		if err := scan(&oid, &zcontent); err != nil {
 			return err
 		}
-		zmap[o] = z
+		zmap[oid] = zcontent
 		return nil
 	})
 	if err != nil {

@@ -8,8 +8,8 @@ import (
 	"regexp"
 )
 
-// gitObject is a lightweight description of a git object.
-type gitObject struct {
+// gitObj is a lightweight description of a git object.
+type gitObj struct {
 	Oid  string
 	Type string
 	Body []byte
@@ -27,7 +27,7 @@ func isOid(oid string) bool {
 // For commit object, returns tree oid, followed by parent oids.
 // For tree object, returns tree and blob oids referred directly.
 // For other (unsupported) objects, returns empty array.
-func (o *gitObject) referredOids() []string {
+func (o *gitObj) referredOids() []string {
 	var oids []string
 	switch o.Type {
 	case "tree":
@@ -55,8 +55,8 @@ func (o *gitObject) referredOids() []string {
 	return oids
 }
 
-// zlibContent returns zlib compressed git object header + body.
-func (o *gitObject) zlibContent() []byte {
+// zcontent returns zlib compressed git object header + body.
+func (o *gitObj) zcontent() []byte {
 	var b bytes.Buffer
 	w := zlib.NewWriter(&b)
 	w.Write([]byte(fmt.Sprintf("%s %d\x00", o.Type, len(o.Body))))

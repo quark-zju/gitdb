@@ -27,14 +27,14 @@ func TestIsOid(t *testing.T) {
 
 func TestReferredOids(t *testing.T) {
 	// blob
-	obj := gitObject{Type: "blob"} // .Type = "blob"
+	obj := gitObj{Type: "blob"}
 	referredOids := obj.referredOids()
 	if len(referredOids) != 0 {
 		t.Errorf("ReferredOids for blob object is incorrect")
 	}
 
 	// tree
-	obj = gitObject{
+	obj = gitObj{
 		Type: "tree",
 		Body: []byte("100644 a\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08\x00\x09\x00\x00\x00" +
 			"100644 b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf1"),
@@ -50,7 +50,7 @@ func TestReferredOids(t *testing.T) {
 		"7b9fe328531202c2f5c2906b21b3a2677a799c40",
 		"0702d34643a8b644846748a00c425ef76a4634d3",
 	}
-	obj = gitObject{
+	obj = gitObj{
 		Type: "commit",
 		Body: []byte("" +
 			"tree " + oids[0] + "\n" +
@@ -68,7 +68,7 @@ func TestReferredOids(t *testing.T) {
 	}
 
 	// other
-	obj = gitObject{Type: "unknown"}
+	obj = gitObj{Type: "unknown"}
 	referredOids = obj.referredOids()
 	if len(referredOids) != 0 {
 		t.Errorf("ReferredOids for unknown object is incorrect")

@@ -62,7 +62,7 @@ func (r *repo) listOids(ref string) ([]string, error) {
 }
 
 // readObjects reads git objects in batch and returns an array of GitObject.
-func (r *repo) readObjects(oids []string) (objs []*gitObject, err error) {
+func (r *repo) readObjects(oids []string) (objs []*gitObj, err error) {
 	cmd := exec.Command("git", "--git-dir", r.dir, "cat-file", "--batch")
 	cmd.Stdin = strings.NewReader(strings.Join(oids, "\n"))
 	out, err := cmd.StdoutPipe()
@@ -75,10 +75,10 @@ func (r *repo) readObjects(oids []string) (objs []*gitObject, err error) {
 		return nil, err
 	}
 
-	objs = make([]*gitObject, 0, len(oids))
+	objs = make([]*gitObj, 0, len(oids))
 	for {
 		// header: sha1 + " " + type + " " + size + "\n"
-		var obj gitObject
+		var obj gitObj
 		var size int
 		var lf rune
 		n, err := fmt.Fscanf(out, "%s %s %d%c", &obj.Oid, &obj.Type, &size, &lf)

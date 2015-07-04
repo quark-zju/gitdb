@@ -381,13 +381,13 @@ func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(rowS
 			return err
 		}
 		defer rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
 		for rows.Next() {
 			if err := rowHandler(rows.Scan); err != nil {
 				return err
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
 		}
 	}
 	return nil

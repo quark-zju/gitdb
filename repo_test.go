@@ -17,7 +17,7 @@ import (
 )
 
 var gitVer float64 = -1
-var tmpDir string = filepath.Join(os.TempDir(), "gitdb-test")
+var repoDir string = filepath.Join(os.TempDir(), "gitdb-test", "repo")
 
 func checkGit() bool {
 	if gitVer < 0 {
@@ -38,7 +38,7 @@ func checkGit() bool {
 	return gitVer >= 1.6
 }
 
-func dummyBytes(n int, prefix string) []byte {
+func randomBytes(n int, prefix string) []byte {
 	v := make([]byte, 0, n+len(prefix))
 	v = append(v, []byte(prefix)...)
 	for i := 0; i < n; i++ {
@@ -68,16 +68,25 @@ func createRandomFile(dir string, prefix string, size int) {
 		d = filepath.Join(d, string([]rune{'0' + rune(rand.Intn(10))}))
 	}
 	os.MkdirAll(d, 0755)
-	ioutil.WriteFile(filepath.Join(d, name), dummyBytes(rand.Intn(size), uniqueString()), 0644)
+	ioutil.WriteFile(filepath.Join(d, name), randomBytes(rand.Intn(size), uniqueString()), 0644)
 }
 
-func createRandomRepo(dir string, steps int) {
+func createRandomRepo(name string, steps int, reuse bool, rebuild bool) string {
+	dir := filepath.Join(repoDir, name)
+	if isDir(dir) && reuse && os.Getenv("NOREUSE") == "" {
+		fmt.Println("Reusing ", dir)
+		return dir
+	}
+
+	if rebuild {
+		os.RemoveAll(dir)
+	}
 	os.MkdirAll(dir, 0755)
 	os.Chdir(dir)
 	exec.Command("git", "init", dir).Run()
 	exec.Command("git", "checkout", "-b", "master").Run()
 	exec.Command("git", "config", "--local", "user.name", "Alice").Run()
-	exec.Command("git", "config", "--local", "user.email", "a@example.com").Run()
+	exec.Command("git", "config", "--local", "user.email", "alice@example.com").Run()
 
 	for i := 0; i < steps; i++ {
 		fmt.Printf("Write repo %s: %d / %d\r", dir, i, steps)
@@ -109,10 +118,11 @@ func createRandomRepo(dir string, steps int) {
 		}
 	}
 	fmt.Printf("Write repo %s: DONE        \n", dir)
+	return dir
 }
 
-func verifyGitObject(obj *gitObject) bool {
-	z := obj.zlibContent()
+func verifyGitObject(obj *gitObj) bool {
+	z := obj.zcontent()
 	// decompress
 	r, _ := zlib.NewReader(bytes.NewBuffer(z))
 	defer r.Close()
@@ -131,11 +141,8 @@ func TestRepo(t *testing.T) {
 		return
 	}
 
-	dir := filepath.Join(tmpDir, "a")
 	n := 30
-	os.RemoveAll(dir)
-	createRandomRepo(dir, n)
-
+	dir := createRandomRepo("a", n, true, true)
 	r := newRepo(dir)
 
 	// Test ListOids

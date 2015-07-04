@@ -1,9 +1,11 @@
 package gitdb
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +13,11 @@ import (
 	"testing"
 )
 
-func createDb() *sql.DB {
-	dp := filepath.Join(tmpDir, "d.sqlite3")
+var dbDir string = filepath.Join(os.TempDir(), "gitdb-test", "db")
+
+func createDb(name string) *sql.DB {
+	os.MkdirAll(dbDir, 0755)
+	dp := filepath.Join(dbDir, fmt.Sprintf("%s.sqlite3", filepath.Base(name)))
 	os.RemoveAll(dp)
 	db, err := sql.Open("sqlite3", dp)
 	if err != nil {
@@ -24,29 +29,16 @@ func createDb() *sql.DB {
 	return db
 }
 
-func createRepo(name string, n int, reuse bool) string {
-	dir := filepath.Join(tmpDir, name)
-	if isDir(dir) && reuse && os.Getenv("REUSE") != "" {
-		fmt.Println("Reusing ", dir)
-		return dir
-	}
-	os.RemoveAll(dir)
-	createRandomRepo(dir, n)
-	return dir
+func updateRepo(name string, n int) {
+	createRandomRepo(name, 15, false, false)
 }
 
-func updateRepo(name string) {
-	dir := filepath.Join(tmpDir, name)
-	createRandomRepo(dir, 15)
-}
-
-func TestDb(t *testing.T) {
+func TestImportExport(t *testing.T) {
 	if !checkGit() {
 		return
 	}
 
-	os.MkdirAll(tmpDir, 0755)
-	db := createDb()
+	db := createDb("importExport")
 	defer db.Close()
 
 	n := 100
@@ -57,7 +49,7 @@ func TestDb(t *testing.T) {
 		}
 		fmt.Println("User set N =", n)
 	}
-	dir1 := createRepo("b1", n, true)
+	dir1 := createRandomRepo("b1", n, true, true)
 	ref1, oids1, e := Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
@@ -74,7 +66,7 @@ func TestDb(t *testing.T) {
 	}
 
 	// Test multiple repo
-	dir2 := createRepo("b2", n, true)
+	dir2 := createRandomRepo("b2", n, true, true)
 	ref2, oids, e := Import(db, dir2, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
@@ -84,7 +76,7 @@ func TestDb(t *testing.T) {
 	}
 
 	// Test sync (fs -> db)
-	updateRepo("b1")
+	updateRepo("b1", 15)
 	ref1u, oids1u, e := Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
@@ -127,7 +119,7 @@ func TestDb(t *testing.T) {
 	for _, ref := range []string{ref1u, ref1} {
 		oids, e = Export(db, dir1, ref, "")
 		if e != nil {
-			t.Fatal("Export error", e)
+			t.Fatal("Export error:", e)
 		}
 		if len(oids) != 0 {
 			t.Fatal("Export unexpected: should write nothing (actually wrote", oids, ")")
@@ -143,7 +135,7 @@ func TestDb(t *testing.T) {
 	}
 
 	// Export to an empty repo
-	dir3 := createRepo("c", 0, false)
+	dir3 := createRandomRepo("c", 0, false, true)
 	oids, e = Export(db, dir3, ref1, "")
 	if e != nil {
 		t.Fatal("Export error", e)

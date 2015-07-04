@@ -3,8 +3,10 @@ package gitdb
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -63,4 +65,37 @@ func (o *gitObj) zcontent() []byte {
 	w.Write(o.Body)
 	w.Close()
 	return b.Bytes()
+}
+
+type errInvalidZcontent string
+
+func (e errInvalidZcontent) Error() string {
+	return "illformed zcontent: " + string(e)
+}
+
+// TODO doc
+func newGitObjFromZcontent(zcontent []byte) (*gitObj, error) {
+	r, err := zlib.NewReader(bytes.NewReader(zcontent))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	var out bytes.Buffer
+	io.Copy(&out, r)
+	b := out.Bytes()
+	i := bytes.IndexByte(b, '\x00')
+	if i <= 0 || i >= len(b) {
+		return nil, errInvalidZcontent("no header delimiter")
+	}
+
+	o := gitObj{Oid: fmt.Sprintf("%040x", sha1.Sum(b)), Body: b[i+1:]}
+	var size int
+	if _, err := fmt.Sscanf(string(b[0:i]), "%s %d", &o.Type, &size); err != nil {
+		return nil, errInvalidZcontent("confusing header + " + string(b[0:i]))
+	}
+	if size != len(o.Body) {
+		return nil, errInvalidZcontent(fmt.Sprintf("body size mismatch %d vs %d", size, len(o.Body)))
+	}
+	return &o, nil
 }

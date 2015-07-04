@@ -1,6 +1,7 @@
 package gitdb
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,23 @@ func TestReferredOids(t *testing.T) {
 	referredOids = obj.referredOids()
 	if len(referredOids) != 0 {
 		t.Errorf("ReferredOids for unknown object is incorrect")
+	}
+}
+
+func TestZcontent(t *testing.T) {
+	obj := gitObj{
+		Oid:  "496d6428b9cf92981dc9495211e6e1120fb6f2ba",
+		Type: "tree",
+		Body: []byte{0x31, 0x30, 0x30, 0x36, 0x34, 0x34, 0x20, 0x61, 0x00, 0xe6, 0x9d, 0xe2,
+			0x9b, 0xb2, 0xd1, 0xd6, 0x43, 0x4b, 0x8b, 0x29, 0xae, 0x77, 0x5a, 0xd8,
+			0xc2, 0xe4, 0x8c, 0x53, 0x91},
+	}
+	zcontent := obj.zcontent()
+	obj2, err := newGitObjFromZcontent(zcontent)
+	if err != nil || obj2 == nil {
+		t.Errorf("newGitObjFromZcontent fails to decode: %s", err)
+	}
+	if obj2.Oid != obj.Oid || obj2.Type != obj.Type || bytes.Compare(obj2.Body, obj.Body) != 0 {
+		t.Errorf("Git object differs after encoding to zcontent and decoding: %v %v", obj, obj2)
 	}
 }

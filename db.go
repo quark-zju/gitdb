@@ -297,7 +297,7 @@ func getTx(dt dbOrTx) (tx *sql.Tx, txByUs bool, err error) {
 	if isTx {
 		return tx, false, nil
 	}
-	return nil, false, fmt.Errorf("neither sql.DB nor sql.Tx")
+	panic("dt should be either sql.DB or sql.Tx")
 }
 
 // minus returns []string with elements in a but not b.

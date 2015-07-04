@@ -155,3 +155,35 @@ func TestImportExport(t *testing.T) {
 		t.Fatal("Export unexpected: failed git fsck check", err)
 	}
 }
+
+func TestRead(t *testing.T) {
+	db := createDb("read")
+	defer db.Close()
+
+	dir := createRandomRepo("r", 50, true, true)
+	oid, _, e := Import(db, dir, "HEAD")
+	if e != nil {
+		t.Fatal("Import error", e)
+	}
+
+	paths, oids, e := ReadTree(db, oid)
+	if e != nil {
+		t.Fatal("ReadTree error", e)
+	}
+
+	blobs, e := ReadBlobs(db, oids)
+	if e != nil {
+		t.Fatal("ReadBlobs error", e)
+	}
+
+	for i, path := range paths {
+		b, e := ioutil.ReadFile(filepath.Join(dir, path))
+		if e != nil {
+			t.Fatal("ReadFile", path, "error", e)
+		}
+		if bytes.Compare(b, blobs[i]) != 0 {
+			t.Error("File content mismatched ", path)
+
+		}
+	}
+}

@@ -139,12 +139,12 @@ func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 // TODO
 func (r *repo) writeRef(ref string, oid string) error {
 	if filepath.IsAbs(ref) || strings.Contains(ref, "..") {
-		return unsafeRefName
+		return errUnsafeRefName(ref)
 	}
 	ref = filepath.Clean(ref)
 	ok := ref == "HEAD" || strings.HasPrefix(ref, "refs/tags/") || strings.HasPrefix(ref, "refs/heads/")
 	if !ok {
-		return unsafeRefName
+		return errUnsafeRefName(ref)
 	}
 	path := filepath.Join(r.dir, ref)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -153,7 +153,11 @@ func (r *repo) writeRef(ref string, oid string) error {
 	return ioutil.WriteFile(path, []byte(oid), 0644)
 }
 
-var unsafeRefName = errors.New("unsafe ref name")
+type errUnsafeRefName string
+
+func (e errUnsafeRefName) Error() string {
+	return "unsafe ref name: " + string(e)
+}
 
 func isDir(path string) bool {
 	fi, err := os.Stat(path)

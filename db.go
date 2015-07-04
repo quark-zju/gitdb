@@ -113,7 +113,7 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 		return nil, err
 	}
 
-	newOids, err := traversal(tx, []string{oid}, repoOids)
+	newOids, err := bfsOids(tx, []string{oid}, repoOids)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func GC(dt dbOrTx, oids []string) ([]string, error) {
 		defer tx.Rollback()
 	}
 
-	oids, err = traversal(tx, oids, nil)
+	oids, err = bfsOids(tx, oids, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -208,32 +208,29 @@ func GC(dt dbOrTx, oids []string) ([]string, error) {
 	return deletable, nil
 }
 
-// traversal returns all referred oids by reading referred oids recursively.
-// It is like `git rev-list $oids` but works in database instead of git repo.
+// bfsOids returns all referred oids by reading referred oids recursively.
+// It is like `git rev-list $oids` but works in database directly.
 // If traversal meets an oid in skipOids, the oid will be ignored.
 // traversal is useful in in two cases:
 // 1. Given a repo's HEAD oid, get all oids of that repo for Export
 // 2. Given all repo HEADs, get all reachable oids for GC
 // Note: traversal is slow. Use cache whenever possible.
-func traversal(tx *sql.Tx, oids []string, skipOids []string) ([]string, error) {
-	walked := toSet(oids)
-	for _, v := range skipOids {
-		walked[v] = true
-	}
-	queryOids := oids // oids for current query
-	result := oids    // result. not using keys of m because it's unordered
-	for len(queryOids) > 0 {
-		nextQueryOids := make([]string, 0)
-		err := queryByOids(tx, "referred", queryOids, func(scan rowScanFunc) error {
+// result is ordered. initOids first followed by referred oids.
+func bfsOids(tx *sql.Tx, initOids []string, skipOids []string) ([]string, error) {
+	visited := toSet(append(initOids, skipOids...))
+	result := initOids
+	for currOids := initOids; len(currOids) > 0; {
+		nextOids := make([]string, 0)
+		err := queryByOids(tx, "referred", currOids, func(scan rowScanFunc) error {
 			var referred string
 			if err := scan(&referred); err != nil {
 				return err
 			}
 			for _, v := range strings.Split(referred, ",") {
-				if len(v) > 0 && walked[v] == false {
-					nextQueryOids = append(nextQueryOids, v)
+				if len(v) > 0 && visited[v] == false {
+					nextOids = append(nextOids, v)
 					result = append(result, v)
-					walked[v] = true
+					visited[v] = true
 				}
 			}
 			return nil
@@ -241,7 +238,7 @@ func traversal(tx *sql.Tx, oids []string, skipOids []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		queryOids = nextQueryOids
+		currOids = nextOids
 	}
 	return result, nil
 }

@@ -133,7 +133,7 @@ func verifyGitObject(obj *gitObj) bool {
 	h := sha1.New()
 	h.Write(b)
 	s := fmt.Sprintf("%x", h.Sum(nil))
-	return s == obj.Oid
+	return s == string(obj.Oid)
 }
 
 func TestRepo(t *testing.T) {
@@ -151,8 +151,8 @@ func TestRepo(t *testing.T) {
 		t.Fatal("Failed to listOids: ", e)
 	}
 	for _, v := range oids {
-		if !isOid(v) {
-			t.Error("Not oid: ", v)
+		if !v.IsValid() {
+			t.Error("Invalid oid: ", v)
 		}
 	}
 	if len(oids) < n {

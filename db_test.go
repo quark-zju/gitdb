@@ -49,7 +49,7 @@ func TestImportExport(t *testing.T) {
 		}
 	}
 	dir1 := createRandomRepo("b1", n, true, true)
-	ref1, oids1, e := Import(db, dir1, "HEAD")
+	oids1, ref1, e := Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
 	}
@@ -58,15 +58,15 @@ func TestImportExport(t *testing.T) {
 	}
 
 	// Test Re-import
-	for _, ref := range []string{"HEAD", ref1} {
-		if r, oids, e := Import(db, dir1, ref); r != ref1 || e != nil || len(oids) != 0 {
+	for _, ref := range []string{"HEAD", string(ref1)} {
+		if oids, r, e := Import(db, dir1, ref); r != ref1 || e != nil || len(oids) != 0 {
 			t.Fatal("Import unexpected: wrong ref or wrong oids or error", e, oids)
 		}
 	}
 
 	// Test multiple repo
 	dir2 := createRandomRepo("b2", n, true, true)
-	ref2, oids, e := Import(db, dir2, "HEAD")
+	oids, ref2, e := Import(db, dir2, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
 	}
@@ -76,7 +76,7 @@ func TestImportExport(t *testing.T) {
 
 	// Test sync (fs -> db)
 	updateRepo("b1", 15)
-	ref1u, oids1u, e := Import(db, dir1, "HEAD")
+	oids1u, ref1u, e := Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
 	}
@@ -92,7 +92,7 @@ func TestImportExport(t *testing.T) {
 	if e != nil {
 		t.Fatal("Failed to start transaction", e)
 	}
-	oids, e = GC(tx, []string{ref1u, ref2})
+	oids, e = GC(tx, []Oid{ref1u, ref2})
 	if e != nil {
 		t.Fatal("GC error", e)
 	}
@@ -100,7 +100,7 @@ func TestImportExport(t *testing.T) {
 		t.Fatal("GC unexpected: reachable objects are deleted", oids)
 	}
 
-	oids, e = GC(tx, []string{ref1, ref2})
+	oids, e = GC(tx, []Oid{ref1, ref2})
 	if e != nil {
 		t.Fatal("GC error", e)
 	}
@@ -113,7 +113,7 @@ func TestImportExport(t *testing.T) {
 	}
 
 	// Re-import missing objects
-	ref1u, oids, e = Import(db, dir1, "HEAD")
+	oids, ref1u, e = Import(db, dir1, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
 	}
@@ -123,7 +123,7 @@ func TestImportExport(t *testing.T) {
 
 	// Test sync (db -> fs)
 	// Export to an up-to-date repo
-	for _, ref := range []string{ref1u, ref1} {
+	for _, ref := range []Oid{ref1u, ref1} {
 		oids, e = Export(db, dir1, ref, "")
 		if e != nil {
 			t.Fatal("Export error:", e)
@@ -158,7 +158,7 @@ func TestImportExport(t *testing.T) {
 		t.Fatal("Export unexpected: expected wrote ", oids1u, " actually wrote", oids, ")")
 	}
 
-	if err := exec.Command("git", "fsck", "--full", "--strict", ref1u).Run(); err != nil {
+	if err := exec.Command("git", "fsck", "--full", "--strict", string(ref1u)).Run(); err != nil {
 		t.Fatal("Export unexpected: failed git fsck check", err)
 	}
 }
@@ -168,7 +168,7 @@ func TestRead(t *testing.T) {
 	defer db.Close()
 
 	dir := createRandomRepo("r", 50, true, true)
-	oid, _, e := Import(db, dir, "HEAD")
+	_, oid, e := Import(db, dir, "HEAD")
 	if e != nil {
 		t.Fatal("Import error", e)
 	}

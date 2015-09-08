@@ -2,13 +2,12 @@ package gitdb
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 )
 
 func TestIsOid(t *testing.T) {
 	cases := []struct {
-		Oid      string
+		Oid      Oid
 		Expected bool
 	}{
 		{"d318a662507e9592830be3a3cbbb2f670b6ce7a5", true},
@@ -20,7 +19,7 @@ func TestIsOid(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if isOid(c.Oid) != c.Expected {
+		if c.Oid.IsValid() != c.Expected {
 			t.Errorf("IsOid(%v) != %v", c.Oid, c.Expected)
 		}
 	}
@@ -41,12 +40,12 @@ func TestReferredOids(t *testing.T) {
 			"100644 b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf1"),
 	}
 	referredOids = obj.referredOids()
-	if strings.Join(referredOids, ",") != "0100020003000400050006000700080009000000,00000000000000000000000000000000000000f1" {
+	if joinOids(referredOids, ",") != "0100020003000400050006000700080009000000,00000000000000000000000000000000000000f1" {
 		t.Errorf("ReferredOids for tree object is incorrect")
 	}
 
 	// commit
-	oids := []string{
+	oids := []Oid{
 		"d318a662507e9592830be3a3cbbb2f670b6ce7a5",
 		"7b9fe328531202c2f5c2906b21b3a2677a799c40",
 		"0702d34643a8b644846748a00c425ef76a4634d3",
@@ -64,7 +63,7 @@ func TestReferredOids(t *testing.T) {
 	}
 
 	referredOids = obj.referredOids()
-	if strings.Join(oids, ",") != strings.Join(referredOids, ",") {
+	if joinOids(oids, ",") != joinOids(referredOids, ",") {
 		t.Errorf("ReferredOids for commit object is incorrect")
 	}
 

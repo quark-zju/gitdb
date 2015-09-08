@@ -44,7 +44,7 @@ func CreateTable(db *sql.DB) (sql.Result, error) {
 //
 // dt is either *sql.DB or *sql.Tx.
 // oid is the git object ID of a git tree or commit.
-func ReadTree(dt dbOrTx, oid string) (modes []int32, oids []string, paths []string, err error) {
+func ReadTree(dt dbOrTx, oid Oid) (modes []int32, oids []Oid, paths []string, err error) {
 	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, nil, nil, err
@@ -53,10 +53,10 @@ func ReadTree(dt dbOrTx, oid string) (modes []int32, oids []string, paths []stri
 		defer tx.Rollback()
 	}
 
-	prefixes := map[string]string{oid: ""}
-	for nextOids := []string{oid}; len(nextOids) > 0; {
+	prefixes := map[Oid]string{oid: ""}
+	for nextOids := []Oid{oid}; len(nextOids) > 0; {
 		objs, err := readObjects(tx, nextOids)
-		nextOids = []string{}
+		nextOids = []Oid{}
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -65,7 +65,7 @@ func ReadTree(dt dbOrTx, oid string) (modes []int32, oids []string, paths []stri
 			switch o.Type {
 			case "commit":
 				// extract tree oid from commit object automatically
-				treeOid := string(o.Body[5:45])
+				treeOid := Oid(o.Body[5:45])
 				nextOids = append(nextOids, treeOid)
 			case "tree":
 				for _, ti := range parseTree(o.Body) {
@@ -96,7 +96,7 @@ func ReadTree(dt dbOrTx, oid string) (modes []int32, oids []string, paths []stri
 //
 // Note: ReadBlobs does not check git object type. It can be used to read raw
 // contents of other git objects.
-func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
+func ReadBlobs(dt dbOrTx, oids []Oid) ([][]byte, error) {
 	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
 // readObjects reads git objects from database and return gitObjs.
 // For duplicated oids, returns two pointers to a same gitObj.
 // Missing objects or mismatched SHA1 will cause errors.
-func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
+func readObjects(dt dbOrTx, oids []Oid) ([]*gitObj, error) {
 	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, err
@@ -129,13 +129,14 @@ func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
 		defer tx.Rollback()
 	}
 
-	m := make(map[string]*gitObj, len(oids))
+	m := make(map[Oid]*gitObj, len(oids))
 	err = queryByOids(tx, "oid, zcontent", oids, func(scan rowScanFunc) error {
-		var oid string
+		var s string
 		var zcontent []byte
-		if err := scan(&oid, &zcontent); err != nil {
+		if err := scan(&s, &zcontent); err != nil {
 			return err
 		}
+		oid := Oid(s)
 		o, err := newGitObjFromZcontent(zcontent)
 		if err != nil {
 			return fmt.Errorf("cannot read object %s: %s", oid, err)
@@ -170,22 +171,22 @@ func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
 // ref is the reference string. It can be "HEAD", a tag name, a branch name,
 // a commit hash or its prefix.
 //
-// Returns refOid, oids, err.
-// refOid is the parsed git object ID (40-char hex string) of the given ref.
+// Returns oids, refOid, err.
 // oids are imported object IDs. If nothing is imported (the database is
 // up-to-date), oids will be an empty array.
-func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, err error) {
+// refOid is the parsed git object ID (40-char hex string) of the given ref.
+func Import(dt dbOrTx, path string, ref string) (oids []Oid, refOid Oid, err error) {
 	// List object IDs to check or import
 	repo := newRepo(path)
 	oids, err = repo.listOids(ref)
 	if err != nil || len(oids) == 0 {
-		return "", nil, err
+		return nil, "", err
 	}
 	refOid = oids[0]
 
 	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
-		return refOid, nil, err
+		return nil, refOid, err
 	}
 	if txByUs {
 		// For transaction created by us, remember to commit or rollback it.
@@ -196,36 +197,36 @@ func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, e
 	// Remove oids that exist in database
 	oids, err = unseenOids(tx, oids)
 	if err != nil {
-		return refOid, nil, err
+		return nil, refOid, err
 	}
 
 	// Read new objects
 	objs, err := repo.readObjects(oids)
 	if err != nil {
-		return refOid, nil, err
+		return nil, refOid, err
 	}
 
 	// Write new objects
 	stmt, err := tx.Prepare("INSERT INTO " + table + " (oid, zcontent, type, referred) VALUES (?, ?, ?, ?)")
 	if err != nil {
-		return refOid, nil, err
+		return nil, refOid, err
 	}
 	defer stmt.Close()
 
 	for _, obj := range objs {
-		_, err = stmt.Exec(obj.Oid, obj.zcontent(), obj.Type, strings.Join(obj.referredOids(), ","))
+		_, err = stmt.Exec(string(obj.Oid), obj.zcontent(), obj.Type, joinOids(obj.referredOids(), ","))
 		if err != nil {
-			return refOid, nil, err
+			return nil, refOid, err
 		}
 	}
 
 	if txByUs {
 		if err = tx.Commit(); err != nil {
-			return refOid, nil, err
+			return nil, refOid, err
 		}
 	}
 
-	return refOid, oids, nil
+	return oids, refOid, nil
 }
 
 // Export syncs git objects from database to filesystem.
@@ -244,9 +245,9 @@ func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, e
 // oids is a list of git object IDs exported. If nothing is exported (the
 // git repository in the filesystem is up-to-date), oids will be an empty
 // array.
-func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
+func Export(dt dbOrTx, path string, oid Oid, ref string) ([]Oid, error) {
 	if len(ref) == 0 {
-		ref = "refs/tags/gitdb/" + oid
+		ref = "refs/tags/gitdb/" + string(oid)
 	}
 
 	// Quick up-to-date test
@@ -272,19 +273,20 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 	// BFS the database to select what we need to export
 	// Note: If an object exists in the repo, we won't check its parent.
 	// This requires writting objects in a certain order. See below.
-	newOids, err := bfsOids(tx, []string{oid}, repoOids)
+	newOids, err := bfsOids(tx, []Oid{oid}, repoOids)
 	if err != nil {
 		return nil, err
 	}
 
 	// Read contents of selected oids
-	zmap := make(map[string][]byte, len(newOids))
+	zmap := make(map[Oid][]byte, len(newOids))
 	err = queryByOids(tx, "oid, zcontent", newOids, func(scan rowScanFunc) error {
-		var oid string
+		var s string
 		var zcontent []byte
-		if err := scan(&oid, &zcontent); err != nil {
+		if err := scan(&s, &zcontent); err != nil {
 			return err
 		}
+		oid := Oid(s)
 		zmap[oid] = zcontent
 		return nil
 	})
@@ -319,7 +321,7 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 // and ancestors.
 //
 // Returns deleted git object IDs.
-func GC(tx *sql.Tx, oids []string) ([]string, error) {
+func GC(tx *sql.Tx, oids []Oid) ([]Oid, error) {
 	// Scan reachable objects
 	oids, err := bfsOids(tx, oids, nil)
 	if err != nil {
@@ -328,7 +330,7 @@ func GC(tx *sql.Tx, oids []string) ([]string, error) {
 	reachable := toSet(oids)
 
 	// Find out deletable objects
-	deletable := make([]string, 0)
+	deletable := make([]Oid, 0)
 	rows, err := tx.Query("SELECT oid FROM " + table)
 	if err != nil {
 		return nil, err
@@ -336,10 +338,11 @@ func GC(tx *sql.Tx, oids []string) ([]string, error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var oid string
-		if err = rows.Scan(&oid); err != nil {
+		var s string
+		if err = rows.Scan(&s); err != nil {
 			return nil, err
 		}
+		oid := Oid(s)
 		if reachable[oid] == false {
 			deletable = append(deletable, oid)
 		}
@@ -373,21 +376,21 @@ func GC(tx *sql.Tx, oids []string) ([]string, error) {
 // Returns oids and error. oids is in BFS order.
 //
 // Note: bfsOids is slow. Use cache whenever possible.
-func bfsOids(tx *sql.Tx, initOids []string, skipOids []string) ([]string, error) {
+func bfsOids(tx *sql.Tx, initOids []Oid, skipOids []Oid) ([]Oid, error) {
 	visited := toSet(append(initOids, skipOids...))
 	result := initOids
 	for currOids := initOids; len(currOids) > 0; {
-		nextOids := make([]string, 0)
+		nextOids := make([]Oid, 0)
 		err := queryByOids(tx, "referred", currOids, func(scan rowScanFunc) error {
 			var referred string
 			if err := scan(&referred); err != nil {
 				return err
 			}
 			for _, v := range strings.Split(referred, ",") {
-				if len(v) > 0 && visited[v] == false {
-					nextOids = append(nextOids, v)
-					result = append(result, v)
-					visited[v] = true
+				if o := Oid(v); len(v) > 0 && visited[o] == false {
+					nextOids = append(nextOids, o)
+					result = append(result, o)
+					visited[o] = true
 				}
 			}
 			return nil
@@ -401,13 +404,14 @@ func bfsOids(tx *sql.Tx, initOids []string, skipOids []string) ([]string, error)
 }
 
 // unseenOids removes oids already stored in the database.
-func unseenOids(tx *sql.Tx, oids []string) ([]string, error) {
-	exists := make([]string, 0)
+func unseenOids(tx *sql.Tx, oids []Oid) ([]Oid, error) {
+	exists := make([]Oid, 0)
 	err := queryByOids(tx, "oid", oids, func(scan rowScanFunc) error {
-		var oid string
-		if err := scan(&oid); err != nil {
+		var s string
+		if err := scan(&s); err != nil {
 			return err
 		}
+		oid := Oid(s)
 		exists = append(exists, oid)
 		return nil
 	})
@@ -419,7 +423,7 @@ func unseenOids(tx *sql.Tx, oids []string) ([]string, error) {
 
 // queryByOids fetches db rows by oids.
 // It handles large oids array by spltting it into smaller queries.
-func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(rowScanFunc) error) error {
+func queryByOids(tx *sql.Tx, columns string, oids []Oid, rowHandler func(rowScanFunc) error) error {
 	if (len(oids)) == 0 {
 		return nil
 	}
@@ -458,10 +462,10 @@ func getOrCreateTx(dt dbOrTx) (tx *sql.Tx, txByUs bool, err error) {
 	panic("dt should be either sql.DB or sql.Tx")
 }
 
-// minus returns []string with elements in a but not b.
-func minus(a []string, b []string) []string {
+// minus returns []Oid with elements in a but not b.
+func minus(a []Oid, b []Oid) []Oid {
 	m := toSet(b)
-	r := make([]string, 0)
+	r := make([]Oid, 0)
 	for _, v := range a {
 		if m[v] == false {
 			r = append(r, v)
@@ -470,21 +474,21 @@ func minus(a []string, b []string) []string {
 	return r
 }
 
-// toSet converts []string to map[string]bool.
-func toSet(a []string) map[string]bool {
-	m := make(map[string]bool, len(a))
+// toSet converts []Oid to map[Oid]bool.
+func toSet(a []Oid) map[Oid]bool {
+	m := make(map[Oid]bool, len(a))
 	for _, v := range a {
 		m[v] = true
 	}
 	return m
 }
 
-// toInterfaces converts []string to []interface{}. It is useful in db.Query
+// toInterfaces converts []Oid to []interface{}. It is useful in db.Query
 // and db.Exec.
-func toInterfaces(a []string) []interface{} {
+func toInterfaces(a []Oid) []interface{} {
 	result := make([]interface{}, 0, len(a))
 	for _, v := range a {
-		result = append(result, v)
+		result = append(result, string(v))
 	}
 	return result
 }

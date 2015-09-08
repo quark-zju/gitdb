@@ -26,13 +26,13 @@ func ExampleReadTree() {
 
 // Works like `git cat-file --batch='--'`
 func ExampleReadBlobs() {
-	var oids []string
+	var oids []gitdb.Oid
 	for {
 		var s string
 		if n, _ := fmt.Scan(&s); n != 1 {
 			break
 		}
-		oids = append(oids, s)
+		oids = append(oids, gitdb.Oid(s))
 	}
 
 	blobs, err := gitdb.ReadBlobs(db, oids)
@@ -93,7 +93,7 @@ func Example_exampleCliTool() {
 			ref = os.Args[3]
 		}
 		dir := os.Args[2]
-		rOid, oids, err := gitdb.Import(db, dir, ref)
+		oids, rOid, err := gitdb.Import(db, dir, ref)
 		if err != nil {
 			panic(err)
 		}
@@ -103,14 +103,17 @@ func Example_exampleCliTool() {
 			usage()
 		}
 		dir := os.Args[2]
-		oid := os.Args[3]
+		oid := gitdb.Oid(os.Args[3])
 		oids, err := gitdb.Export(db, dir, oid, "refs/heads/master")
 		if err != nil {
 			panic(err)
 		}
 		fmt.Printf("Exported to %s: %d objects; master set to '%s'.\n", dir, len(oids), oid)
 	case 'g': // GC
-		oids := os.Args[2:len(os.Args)]
+		var oids []gitdb.Oid
+		for _, o := range os.Args[2:len(os.Args)] {
+			oids = append(oids, gitdb.Oid(o))
+		}
 		tx, err := db.Begin()
 		if err != nil {
 			panic(err)

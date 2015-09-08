@@ -28,8 +28,7 @@ func newRepo(dir string) *repo {
 
 // listOids lists the git object IDs in hex form.
 // ref is a git commit, for example, "HEAD", "master", "17ae1d07" etc.
-func (r *repo) listOids(ref string) ([]string, error) {
-	oids := make([]string, 0)
+func (r *repo) listOids(ref string) (oids []Oid, err error) {
 	cmd := exec.Command("git", "--git-dir", r.dir, "rev-list", "--objects", ref)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -45,8 +44,8 @@ func (r *repo) listOids(ref string) ([]string, error) {
 		if err != nil {
 			break
 		}
-		oid := strings.Split(line, " ")[0][0:40]
-		if isOid(oid) {
+		oid := Oid(strings.Split(line, " ")[0][0:40])
+		if oid.IsValid() {
 			oids = append(oids, oid)
 		}
 	}
@@ -56,9 +55,9 @@ func (r *repo) listOids(ref string) ([]string, error) {
 }
 
 // readObjects reads git objects in batch and returns an array of GitObject.
-func (r *repo) readObjects(oids []string) (objs []*gitObj, err error) {
+func (r *repo) readObjects(oids []Oid) (objs []*gitObj, err error) {
 	cmd := exec.Command("git", "--git-dir", r.dir, "cat-file", "--batch")
-	cmd.Stdin = strings.NewReader(strings.Join(oids, "\n"))
+	cmd.Stdin = strings.NewReader(joinOids(oids, "\n"))
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -101,15 +100,15 @@ func (r *repo) readObjects(oids []string) (objs []*gitObj, err error) {
 
 // hasOid checks whether an object exists or not.
 // It runs an external git process so do not call frequently.
-func (r *repo) hasOid(oid string) bool {
-	cmd := exec.Command("git", "--git-dir", r.dir, "cat-file", "-e", oid)
+func (r *repo) hasOid(oid Oid) bool {
+	cmd := exec.Command("git", "--git-dir", r.dir, "cat-file", "-e", string(oid))
 	err := cmd.Run()
 	return err == nil
 }
 
-func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
-	dir := filepath.Join(r.dir, "objects", oid[0:2])
-	path := filepath.Join(dir, oid[2:40])
+func (r *repo) writeRawObject(oid Oid, zlibContent []byte) error {
+	dir := filepath.Join(r.dir, "objects", string(oid)[0:2])
+	path := filepath.Join(dir, string(oid)[2:40])
 	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
 		return nil
 	}
@@ -126,7 +125,7 @@ func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 	return nil
 }
 
-func (r *repo) writeRef(ref string, oid string) error {
+func (r *repo) writeRef(ref string, oid Oid) error {
 	if filepath.IsAbs(ref) || strings.Contains(ref, "..") {
 		return errUnsafeRefName(ref)
 	}

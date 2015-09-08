@@ -6,7 +6,7 @@ import (
 )
 
 type treeItem struct {
-	Oid  string
+	Oid  Oid
 	Name string
 	Mode int32
 }
@@ -34,7 +34,7 @@ func parseTree(body []byte) []*treeItem {
 			mode, _ := strconv.ParseUint(string(body[startPos:spacePos]), 8, 64)
 			startPos = pos + 21
 			ti := treeItem{
-				Oid:  hex.EncodeToString(body[pos+1 : startPos]),
+				Oid:  Oid(hex.EncodeToString(body[pos+1 : startPos])),
 				Name: string(body[spacePos+1 : pos]),
 				Mode: int32(mode),
 			}

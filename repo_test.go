@@ -73,7 +73,7 @@ func createRandomFile(dir string, prefix string, size int) {
 
 func createRandomRepo(name string, steps int, reuse bool, rebuild bool) string {
 	dir := filepath.Join(repoDir, name)
-	if isDir(dir) && reuse && os.Getenv("NOREUSE") == "" {
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() && reuse && os.Getenv("NOREUSE") == "" {
 		fmt.Println("Reusing ", dir)
 		return dir
 	}

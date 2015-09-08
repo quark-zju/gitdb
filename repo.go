@@ -2,7 +2,6 @@ package gitdb
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -17,15 +16,10 @@ type repo struct {
 	dir string
 }
 
-// errUnexpectedOutput means while reading output of a git command, we cannot
-// get expected output. Possibly because ill-formed output format caused by
-// wrong git version, the git process exited abnormally, etc.
-var errUnexpectedOutput = errors.New("unexpected git output")
-
 // newRepo returns a new Repo that mapped to a git repo in local filesystem.
 func newRepo(dir string) *repo {
 	altDir := filepath.Join(dir, ".git")
-	if isDir(altDir) {
+	if fi, err := os.Stat(altDir); err == nil && fi.IsDir() {
 		return &repo{dir: altDir}
 	} else {
 		return &repo{dir: dir}
@@ -80,47 +74,43 @@ func (r *repo) readObjects(oids []string) (objs []*gitObj, err error) {
 		// header: sha1 + " " + type + " " + size + "\n"
 		var obj gitObj
 		var size int
-		var lf rune
-		n, err := fmt.Fscanf(out, "%s %s %d%c", &obj.Oid, &obj.Type, &size, &lf)
-		if err != nil || n < 4 || lf != '\n' {
+		n, err := fmt.Fscanf(out, "%s %s %d\n", &obj.Oid, &obj.Type, &size)
+		if err != nil || n < 3 {
 			break
 		}
 
 		// body: bytes + "\n"
 		obj.Body = make([]byte, size)
 		n, err = io.ReadFull(out, obj.Body)
-		fmt.Fscanf(out, "%c", &lf)
-		if err != nil || n < size || lf != '\n' {
+		fmt.Fscanf(out, "\n")
+		if err != nil || n < size {
 			break
 		}
 		objs = append(objs, &obj)
 	}
 
-	err = cmd.Wait()
-	if err != nil {
-		return objs, err
-	}
+	cmd.Process.Kill()
+	cmd.Wait()
 
 	if len(objs) != len(oids) {
-		return objs, errUnexpectedOutput
+		return objs, fmt.Errorf("git cat-file only returns %d objects, but %d required", len(objs), len(oids))
 	}
 
 	return objs, nil
 }
 
 // hasOid checks whether an object exists or not.
-// It runs an external git process so do not use frequently.
+// It runs an external git process so do not call frequently.
 func (r *repo) hasOid(oid string) bool {
 	cmd := exec.Command("git", "--git-dir", r.dir, "cat-file", "-e", oid)
 	err := cmd.Run()
 	return err == nil
 }
 
-// TODO
 func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 	dir := filepath.Join(r.dir, "objects", oid[0:2])
 	path := filepath.Join(dir, oid[2:40])
-	if isFile(path) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
 		return nil
 	}
 
@@ -136,7 +126,6 @@ func (r *repo) writeRawObject(oid string, zlibContent []byte) error {
 	return nil
 }
 
-// TODO
 func (r *repo) writeRef(ref string, oid string) error {
 	if filepath.IsAbs(ref) || strings.Contains(ref, "..") {
 		return errUnsafeRefName(ref)
@@ -157,20 +146,4 @@ type errUnsafeRefName string
 
 func (e errUnsafeRefName) Error() string {
 	return "unsafe ref name: " + string(e)
-}
-
-func isDir(path string) bool {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeDir) != 0
-}
-
-func isFile(path string) bool {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeDir) == 0
 }

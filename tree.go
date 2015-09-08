@@ -15,7 +15,8 @@ func (ti *treeItem) IsTree() bool {
 	return ti.Mode&0100000 == 0
 }
 
-// TODO
+// parseTree parses a git tree object from its body.
+// Returns an array of treeItem. A treeItem has oid, name and mode.
 func parseTree(body []byte) []*treeItem {
 	var result []*treeItem
 	for pos, startPos, spacePos := 0, 0, 0; pos < len(body)-20; pos++ {

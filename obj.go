@@ -10,7 +10,7 @@ import (
 	"regexp"
 )
 
-// gitObj is a lightweight description of a git object.
+// gitObj is a lightweight representation of a git object.
 type gitObj struct {
 	Oid  string
 	Type string
@@ -73,8 +73,10 @@ func (e errInvalidZcontent) Error() string {
 	return "illformed zcontent: " + string(e)
 }
 
-// TODO doc
+// newGitObjFromZcontent constructs a new gitObj using zcontent.
+// zcontent has the same format as the file of a unpacked git object.
 func newGitObjFromZcontent(zcontent []byte) (*gitObj, error) {
+	// Uncompress
 	r, err := zlib.NewReader(bytes.NewReader(zcontent))
 	if err != nil {
 		return nil, err
@@ -84,18 +86,22 @@ func newGitObjFromZcontent(zcontent []byte) (*gitObj, error) {
 	var out bytes.Buffer
 	io.Copy(&out, r)
 	b := out.Bytes()
+
+	// Find header delimiter
 	i := bytes.IndexByte(b, '\x00')
 	if i <= 0 || i >= len(b) {
 		return nil, errInvalidZcontent("no header delimiter")
 	}
 
+	// Calculate SHA1 and parse header to get oid and type, size
 	o := gitObj{Oid: fmt.Sprintf("%040x", sha1.Sum(b)), Body: b[i+1:]}
 	var size int
-	if _, err := fmt.Sscanf(string(b[0:i]), "%s %d", &o.Type, &size); err != nil {
-		return nil, errInvalidZcontent("confusing header + " + string(b[0:i]))
+	if n, err := fmt.Sscanf(string(b[0:i]), "%s %d", &o.Type, &size); err != nil || n < 2 {
+		return nil, errInvalidZcontent("illegal header + " + string(b[0:i]))
 	}
 	if size != len(o.Body) {
-		return nil, errInvalidZcontent(fmt.Sprintf("body size mismatch %d vs %d", size, len(o.Body)))
+		return nil, errInvalidZcontent(fmt.Sprintf("body size mismatch: claimed %d, actual %d", size, len(o.Body)))
 	}
+
 	return &o, nil
 }

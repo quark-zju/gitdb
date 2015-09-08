@@ -47,7 +47,6 @@ func TestImportExport(t *testing.T) {
 		if n < 30 {
 			n = 30
 		}
-		fmt.Println("User set N =", n)
 	}
 	dir1 := createRandomRepo("b1", n, true, true)
 	ref1, oids1, e := Import(db, dir1, "HEAD")
@@ -88,8 +87,12 @@ func TestImportExport(t *testing.T) {
 		t.Fatal("Import unexpected: imported nothing")
 	}
 
-	// Test gc
-	oids, e = GC(db, []string{ref1u, ref2})
+	// Test GC
+	tx, e := db.Begin()
+	if e != nil {
+		t.Fatal("Failed to start transaction", e)
+	}
+	oids, e = GC(tx, []string{ref1u, ref2})
 	if e != nil {
 		t.Fatal("GC error", e)
 	}
@@ -97,12 +100,16 @@ func TestImportExport(t *testing.T) {
 		t.Fatal("GC unexpected: reachable objects are deleted", oids)
 	}
 
-	oids, e = GC(db, []string{ref1, ref2})
+	oids, e = GC(tx, []string{ref1, ref2})
 	if e != nil {
 		t.Fatal("GC error", e)
 	}
 	if len(oids) != len(oids1u) {
 		t.Fatal("GC unexpected: unreachable objects ", oids1u, " are not deleted", oids)
+	}
+	e = tx.Commit()
+	if e != nil {
+		t.Fatal("Failed to commit transaction")
 	}
 
 	// Re-import missing objects
@@ -166,14 +173,25 @@ func TestRead(t *testing.T) {
 		t.Fatal("Import error", e)
 	}
 
-	paths, oids, e := ReadTree(db, oid)
+	modes, oids, paths, e := ReadTree(db, oid)
 	if e != nil {
 		t.Fatal("ReadTree error", e)
+	}
+	if len(paths) != len(oids) || len(oids) != len(modes) {
+		t.Fatal("ReadTree returns inconsistent numbers of paths, oids, modes: ", len(paths), len(oids), len(modes))
+	}
+	for _, m := range modes {
+		if m != 0100644 {
+			t.Fatal("Mode ", m, " is unexpected")
+		}
 	}
 
 	blobs, e := ReadBlobs(db, oids)
 	if e != nil {
 		t.Fatal("ReadBlobs error", e)
+	}
+	if len(blobs) != len(oids) {
+		t.Fatal("ReadBlobs returns ", len(blobs), " items, does not equal to oids (", len(oids), ")")
 	}
 
 	for i, path := range paths {

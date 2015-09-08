@@ -10,46 +10,55 @@ import (
 const table = "gitobjects"
 const batchRows = 500
 
-// TODO support both DB and Tx
+// dbOrTx is compatible with sql.DB and sql.Tx
 type dbOrTx interface {
 	Query(query string, args ...interface{}) (*sql.Rows, error)
 	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
-// TODO
+// rowScanFunc matches the signature of (*sql.Rows).Scan
 type rowScanFunc func(...interface{}) error
 
-// TODO
+// CreateTable creates the required git objects table on demand.
 func CreateTable(db *sql.DB) (sql.Result, error) {
 	return db.Exec("CREATE TABLE IF NOT EXISTS " + table + " (" +
 		"oid CHAR(40) PRIMARY KEY NOT NULL," +
 		"type CHAR(6) NOT NULL," +
-		// Actually, zcontent contains all other fields:
-		// - oid: sha1(zcontent).
-		// - type: header in inflated zcontent.
-		// - referred: parsing inflated zcontent.
-		// Other fields exist for performance reason.
-		// MEDIUMBLOB is MySQL specific, 16MB.
+		// Note: zcontent (zlib compressed content of a git object)
+		// has the information of all other fields:
+		// - oid: sha1(zcontent)
+		// - type: header in uncompressed zcontent
+		// - referred: parsing uncompressed content
+		// These fields seem to be unnecessary but they exist for
+		// performance reason.
+		//
+		// MEDIUMBLOB is MySQL specific, which is 16MB. BLOB in Sqlite
+		// does not have a length limit.
 		"zcontent MEDIUMBLOB NOT NULL," +
 		"referred TEXT)")
 }
 
-// TODO
-func ReadTree(dt dbOrTx, oid string) (paths []string, oids []string, err error) {
-	tx, txByUs, err := getTx(dt)
+// ReadTree reads trees and sub-trees recursively from database.
+// Returns modes, oids, full paths for non-tree objects.
+// It is like `git ls-tree -r` but works directly in database.
+//
+// dt is either *sql.DB or *sql.Tx.
+// oid is the git object ID of a git tree or commit.
+func ReadTree(dt dbOrTx, oid string) (modes []int32, oids []string, paths []string, err error) {
+	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if txByUs {
 		defer tx.Rollback()
 	}
 
 	prefixes := map[string]string{oid: ""}
-	for oids := []string{oid}; len(oids) > 0; {
-		var nextOids []string
-		objs, err := readObjects(tx, oids)
+	for nextOids := []string{oid}; len(nextOids) > 0; {
+		objs, err := readObjects(tx, nextOids)
+		nextOids = []string{}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, o := range objs {
 			prefix := prefixes[o.Oid]
@@ -67,17 +76,28 @@ func ReadTree(dt dbOrTx, oid string) (paths []string, oids []string, err error) 
 					} else {
 						paths = append(paths, path)
 						oids = append(oids, ti.Oid)
+						modes = append(modes, ti.Mode)
 					}
 				}
 			}
 		}
-		oids = nextOids
 	}
-	return paths, oids, nil
+	return modes, oids, paths, nil
 }
 
+// ReadBlobs reads blob contents from database.
+// It is like `git cat-file --batch` but only returns contents, without type or
+// size information.
+//
+// dt is either *sql.DB or *sql.Tx.
+// oids are the git object IDs of the blobs to be read.
+//
+// It is often used after ReadTree.
+//
+// Note: ReadBlobs does not check git object type. It can be used to read raw
+// contents of other git objects.
 func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
-	tx, txByUs, err := getTx(dt)
+	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +117,11 @@ func ReadBlobs(dt dbOrTx, oids []string) ([][]byte, error) {
 	return result, nil
 }
 
-// TODO
+// readObjects reads git objects from database and return gitObjs.
+// For duplicated oids, returns two pointers to a same gitObj.
+// Missing objects or mismatched SHA1 will cause errors.
 func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
-	tx, txByUs, err := getTx(dt)
+	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, err
 	}
@@ -116,10 +138,10 @@ func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
 		}
 		o, err := newGitObjFromZcontent(zcontent)
 		if err != nil {
-			return fmt.Errorf("failed to read %s: %s", oid, err)
+			return fmt.Errorf("cannot read object %s: %s", oid, err)
 		}
 		if o.Oid != oid {
-			return fmt.Errorf("sha1 mismatch: %s vs %s", o.Oid, oid)
+			return fmt.Errorf("sha1 mismatch: oid = %s, sha1(content) = %s", oid, o.Oid)
 		}
 		m[oid] = o
 		return nil
@@ -132,18 +154,28 @@ func readObjects(dt dbOrTx, oids []string) ([]*gitObj, error) {
 	for _, oid := range oids {
 		obj, ok := m[oid]
 		if !ok {
-			return nil, fmt.Errorf("not found: %s", oid)
+			return nil, fmt.Errorf("object not found: %s", oid)
 		}
 		result = append(result, obj)
 	}
 	return result, nil
 }
 
-// TODO
+// Import syncs git objects from filesystem to database.
+// It is like `git push` running from the filesystem.
+//
+// dt is either *sql.DB or *sql.Tx.
+// path is the path of the git repository. It can be the `.git` directory,
+// or its parent.
+// ref is the reference string. It can be "HEAD", a tag name, a branch name,
+// a commit hash or its prefix.
+//
+// Returns refOid, oids, err.
+// refOid is the parsed git object ID (40-char hex string) of the given ref.
+// oids are imported object IDs. If nothing is imported (the database is
+// up-to-date), oids will be an empty array.
 func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, err error) {
-	// 1: list ids
-	// 2: what ids are we missing
-	// 3: import that ids
+	// List object IDs to check or import
 	repo := newRepo(path)
 	oids, err = repo.listOids(ref)
 	if err != nil || len(oids) == 0 {
@@ -151,24 +183,29 @@ func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, e
 	}
 	refOid = oids[0]
 
-	tx, txByUs, err := getTx(dt)
+	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return refOid, nil, err
 	}
 	if txByUs {
+		// For transaction created by us, remember to commit or rollback it.
+		// tx.Rollback will do nothing after tx.Commit().
 		defer tx.Rollback()
 	}
 
+	// Remove oids that exist in database
 	oids, err = unseenOids(tx, oids)
 	if err != nil {
 		return refOid, nil, err
 	}
 
+	// Read new objects
 	objs, err := repo.readObjects(oids)
 	if err != nil {
 		return refOid, nil, err
 	}
 
+	// Write new objects
 	stmt, err := tx.Prepare("INSERT INTO " + table + " (oid, zcontent, type, referred) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return refOid, nil, err
@@ -191,22 +228,34 @@ func Import(dt dbOrTx, path string, ref string) (refOid string, oids []string, e
 	return refOid, oids, nil
 }
 
-// TODO
+// Export syncs git objects from database to filesystem.
+// It is like `git pull` running from the filesystem.
+//
+// dt is either *sql.DB or *sql.Tx.
+// path is the path of the git repository. It can be the `.git` directory,
+// or its parent.
+// oid is the git object ID in database.
+// ref is the reference string which will be written to the filesystem.
+// It is usually "HEAD". It could also be "refs/tags/foo", or "refs/heads/bar".
+// If ref is an empty string, a generated tag name will be used to make the
+// newly written objects not orphaned.
+//
+// Returns oids and error.
+// oids is a list of git object IDs exported. If nothing is exported (the
+// git repository in the filesystem is up-to-date), oids will be an empty
+// array.
 func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
-	// 1: quick test: is repo up-to-date ?
-	// 2: compare oids, decide which oids to be written
-	// 3: write oids
-	// TODO
 	if len(ref) == 0 {
 		ref = "refs/tags/gitdb/" + oid
 	}
 
+	// Quick up-to-date test
 	repo := newRepo(path)
 	if repo.hasOid(oid) {
 		return nil, repo.writeRef(ref, oid)
 	}
 
-	tx, txByUs, err := getTx(dt)
+	tx, txByUs, err := getOrCreateTx(dt)
 	if err != nil {
 		return nil, err
 	}
@@ -214,18 +263,21 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 		defer tx.Rollback()
 	}
 
-	// Check oids on the fly ?
+	// Scan oids that the repo already have
 	repoOids, err := repo.listOids("--all")
 	if err != nil {
 		return nil, err
 	}
 
+	// BFS the database to select what we need to export
+	// Note: If an object exists in the repo, we won't check its parent.
+	// This requires writting objects in a certain order. See below.
 	newOids, err := bfsOids(tx, []string{oid}, repoOids)
 	if err != nil {
 		return nil, err
 	}
 
-	// read content
+	// Read contents of selected oids
 	zmap := make(map[string][]byte, len(newOids))
 	err = queryByOids(tx, "oid, zcontent", newOids, func(scan rowScanFunc) error {
 		var oid string
@@ -240,12 +292,13 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 		return nil, err
 	}
 
-	// write in reversed order, make sure required objects are written first
+	// Write git objects to filesystem
+	// Dependent objects (with higher level of the BFS tree) are written first.
 	for i := len(newOids) - 1; i >= 0; i-- {
 		o := newOids[i]
 		z, ok := zmap[o]
 		if !ok {
-			return nil, errMissingObject(o)
+			return nil, errDbMissingObject(o)
 		}
 		if err := repo.writeRawObject(o, z); err != nil {
 			return nil, err
@@ -258,33 +311,30 @@ func Export(dt dbOrTx, path string, oid string, ref string) ([]string, error) {
 		}
 	}
 
-	// Write ref so that `git rev-list --all` will list these oids
+	// Write ref so they are no longer orphaned
 	return newOids, repo.writeRef(ref, oid)
 }
 
-// Gc TODO
-func GC(dt dbOrTx, oids []string) ([]string, error) {
-	tx, txByUs, err := getTx(dt)
+// GC removes all objects from database except for oids and their parents
+// and ancestors.
+//
+// Returns deleted git object IDs.
+func GC(tx *sql.Tx, oids []string) ([]string, error) {
+	// Scan reachable objects
+	oids, err := bfsOids(tx, oids, nil)
 	if err != nil {
 		return nil, err
 	}
-	if txByUs {
-		defer tx.Rollback()
-	}
-
-	oids, err = bfsOids(tx, oids, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	reachable := toSet(oids)
-	deletable := make([]string, 0)
 
+	// Find out deletable objects
+	deletable := make([]string, 0)
 	rows, err := tx.Query("SELECT oid FROM " + table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	for rows.Next() {
 		var oid string
 		if err = rows.Scan(&oid); err != nil {
@@ -298,6 +348,7 @@ func GC(dt dbOrTx, oids []string) ([]string, error) {
 		return nil, err
 	}
 
+	// Delete objects in batch
 	for i := 0; i < len(deletable); i += batchRows {
 		j := min(i+batchRows, len(deletable))
 		args := toInterfaces(deletable[i:j])
@@ -307,22 +358,21 @@ func GC(dt dbOrTx, oids []string) ([]string, error) {
 		}
 	}
 
-	if txByUs {
-		if err = tx.Commit(); err != nil {
-			return nil, err
-		}
-	}
 	return deletable, nil
 }
 
 // bfsOids returns all referred oids by reading referred oids recursively.
-// It is like `git rev-list $oids` but works in database directly.
-// If traversal meets an oid in skipOids, the oid will be ignored.
-// traversal is useful in in two cases:
+// It is like `git rev-list $oids` but works directly in database.
+// If an oid matches one in skipOids, the object and its parents will be
+// skipped.
+//
+// bfsOids is useful in two cases:
 // 1. Given a repo's HEAD oid, get all oids of that repo for Export
 // 2. Given all repo HEADs, get all reachable oids for GC
-// Note: traversal is slow. Use cache whenever possible.
-// result is ordered. initOids first followed by referred oids.
+//
+// Returns oids and error. oids is in BFS order.
+//
+// Note: bfsOids is slow. Use cache whenever possible.
 func bfsOids(tx *sql.Tx, initOids []string, skipOids []string) ([]string, error) {
 	visited := toSet(append(initOids, skipOids...))
 	result := initOids
@@ -350,7 +400,7 @@ func bfsOids(tx *sql.Tx, initOids []string, skipOids []string) ([]string, error)
 	return result, nil
 }
 
-// unseenOids removes oids which are already stored in database.
+// unseenOids removes oids already stored in the database.
 func unseenOids(tx *sql.Tx, oids []string) ([]string, error) {
 	exists := make([]string, 0)
 	err := queryByOids(tx, "oid", oids, func(scan rowScanFunc) error {
@@ -367,12 +417,12 @@ func unseenOids(tx *sql.Tx, oids []string) ([]string, error) {
 	return minus(oids, exists), nil
 }
 
-// queryByOids fetch db rows by oids.
+// queryByOids fetches db rows by oids.
+// It handles large oids array by spltting it into smaller queries.
 func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(rowScanFunc) error) error {
 	if (len(oids)) == 0 {
 		return nil
 	}
-
 	for i := 0; i < len(oids); i += batchRows {
 		j := min(i+batchRows, len(oids))
 		args := toInterfaces(oids[i:j])
@@ -393,8 +443,9 @@ func queryByOids(tx *sql.Tx, columns string, oids []string, rowHandler func(rowS
 	return nil
 }
 
-// getTx TODO
-func getTx(dt dbOrTx) (tx *sql.Tx, txByUs bool, err error) {
+// getOrCreateTx creates a new tx and set txByUs to true if dt is sql.DB,
+// otherwise, getOrCreateTx returns tx as is and txByUs is false.
+func getOrCreateTx(dt dbOrTx) (tx *sql.Tx, txByUs bool, err error) {
 	db, isDb := dt.(*sql.DB)
 	if isDb {
 		tx, err := db.Begin()
@@ -419,7 +470,7 @@ func minus(a []string, b []string) []string {
 	return r
 }
 
-// toMap converts []string to "set" (map[string]bool, values are true).
+// toSet converts []string to map[string]bool.
 func toSet(a []string) map[string]bool {
 	m := make(map[string]bool, len(a))
 	for _, v := range a {
@@ -428,8 +479,8 @@ func toSet(a []string) map[string]bool {
 	return m
 }
 
-// toInterfaces converts []string to []interface{}. It is useful in
-// db.Query and db.Exec.
+// toInterfaces converts []string to []interface{}. It is useful in db.Query
+// and db.Exec.
 func toInterfaces(a []string) []interface{} {
 	result := make([]interface{}, 0, len(a))
 	for _, v := range a {
@@ -446,9 +497,8 @@ func min(a int, b int) int {
 	}
 }
 
-// TODO
-type errMissingObject string
+type errDbMissingObject string
 
-func (e errMissingObject) Error() string {
-	return fmt.Sprintf("git object %s required but not found", string(e))
+func (e errDbMissingObject) Error() string {
+	return fmt.Sprintf("git object %s required but not found in database", string(e))
 }

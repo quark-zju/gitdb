@@ -1,4 +1,4 @@
-gitdb [![Doc](https://godoc.org/github.com/quark-zju/gitdb?status.svg)](https://godoc.org/github.com/quark-zju/gitdb)
+gitdb [![Documentation](https://godoc.org/github.com/quark-zju/gitdb?status.svg)](https://godoc.org/github.com/quark-zju/gitdb) [![Build Status](https://travis-ci.org/quark-zju/gitdb.svg?branch=master)](https://travis-ci.org/quark-zju/gitdb)
 =====
 
 A lightweight golang package to sync git objects between database and filesystem.

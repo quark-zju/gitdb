@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
-	"gitlab.com/quark/gitdb"
+	"github.com/quark-zju/gitdb"
 	"os"
 )
 

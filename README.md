@@ -1,16 +1,21 @@
 gitdb [![Documentation](https://godoc.org/github.com/quark-zju/gitdb?status.svg)](https://godoc.org/github.com/quark-zju/gitdb) [![Build Status](https://travis-ci.org/quark-zju/gitdb.svg?branch=master)](https://travis-ci.org/quark-zju/gitdb)
 =====
 
-A lightweight golang package to sync git objects between database and filesystem.
-
-gitdb depends on standard Go packages and git binary, has a reasonable performance.
+A lightweight golang library to sync git objects between database and filesystem.
 
 
 Features
 --------
 
 * Sync git objects between filesystem and database, incrementally.
-* Read tree and blobs from git database directly.
+* Read git trees and blobs from database directly.
+
+
+Dependencies
+------------
+
+* git binary, 2.5.1 tested
+* go, 1.5 linux/amd64 tested
 
 
 Core API by examples
@@ -46,16 +51,18 @@ FAQ
 
 **Q: Why sync git objects to database?**
 
-A: Easier deployment. Usually applications on running multiple nodes can connect to a centric database but do not have a centric filesystem.
+A: Easier deployment. Especially for applications which use git, run on multiple instances, have a centric database and do not have a centric filesystem.
 
 
 **Q: Does gitdb scale?**
 
 A: Sadly git does not scale and neither does gitdb.
    Repos with thousands of commits probably won't perform well.
-   If you need to delete unused objects (gitable.GC), do not store too many repos because GC will scan the whole table.
-   Things can be better using recursive SQL query. However some databases (namely MySQL 5.6) do not support it. For now, gitdb chooses to not use complex SQLs and be compatible with MySQL 5.6.
-   Database latency is extremely important to gitdb performance. Keep database as near as possible to the application.
+   A lot of small repos should be okay, as long as GC performance is not important.
+
+   Things could be much better using recursive SQL queries (Common Table Expressions). However MySQL 5.6 does not support it while it is a target gitdb must support.
+   MySQL stored procedures could help but it will be some extra and probably non-portable work.
+   Therefore, database latency is extremely important to gitdb performance. Keep the database and the application as near as possible.
 
 
 **Q: Will Import and Export ignore existing objects?**

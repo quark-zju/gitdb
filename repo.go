@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,11 +119,12 @@ func (r *repo) writeRawObject(oid Oid, zlibContent []byte) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(path, zlibContent, 0444)
+	tmpPath := fmt.Sprintf("%s.%d", path, rand.Int())
+	err = ioutil.WriteFile(tmpPath, zlibContent, 0444)
 	if err != nil {
 		return err
 	}
-	return nil
+	return os.Rename(tmpPath, path)
 }
 
 func (r *repo) writeRef(ref string, oid Oid) error {
